@@ -88,7 +88,6 @@ func (s *SkipList) Get(key string) ([]byte, bool) {
 
 }
 
-// put
 func (s *SkipList) Put(key string, value []byte) {
 	// write lock
 	// as memory manipulation is there so this one should be a exculive lock
@@ -120,6 +119,7 @@ func (s *SkipList) Put(key string, value []byte) {
 	dest := curNode.forward[0]
 	// exist and we just have to update it
 	if dest != nil && dest.Key == key {
+
 		dest.Value = value
 		return
 	}

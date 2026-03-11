@@ -20,10 +20,15 @@ func NewWal(path string) (*Wal, error) {
 	}
 
 	walPath := filepath.Join(path, "wal.log")
-	file, err := os.OpenFile(walPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	file, err := os.OpenFile(walPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return nil, err
 	}
+	_, err = file.Seek(0, 2)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Wal{file: file}, nil
 }
 
@@ -46,6 +51,8 @@ func (w *Wal) Append(key string, value []byte) error {
 }
 
 func (w *Wal) Clear() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	err := w.file.Truncate(0)
 	if err != nil {
 		return err
@@ -54,5 +61,5 @@ func (w *Wal) Clear() error {
 	if err != nil {
 		return err
 	}
-	return nil
+	return w.file.Sync()
 }
