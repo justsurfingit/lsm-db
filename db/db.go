@@ -9,10 +9,13 @@ import (
 	"strings"
 
 	"github.com/justsurfingit/lsm-db/memtable"
+	"github.com/justsurfingit/lsm-db/shared"
 	sstable "github.com/justsurfingit/lsm-db/ssttable"
 
 	"github.com/justsurfingit/lsm-db/wal"
 )
+
+// index Entry
 
 type Db struct {
 	memtable        *memtable.SkipList
@@ -21,6 +24,7 @@ type Db struct {
 	maxMemtableSize int
 	nextFieldId     int
 	sstDir          string
+	indices         map[string]shared.IndexEntry
 }
 
 func NewDb(path string) (*Db, error) {
@@ -53,13 +57,23 @@ func NewDb(path string) (*Db, error) {
 	if err != nil {
 		return nil, err
 	}
+	// wAL replay
+	WALcontent,err:=wal.GetAll()
+	if err!=nil{
+		return nil,err
+	}
+	loadedMemtable:=memtable.NewSkipList()
+	for _,kvpair:=range WALcontent{
+		loadedMemtable.Put(kvpair.Key,kvpair.Value)
+	}
 	return &Db{
-		memtable:        memtable.NewSkipList(),
+		memtable:        loadedMemtable,
 		wal:             wal,
 		memtableSize:    0,
 		maxMemtableSize: 4096,
 		nextFieldId:     nextID,
 		sstDir:          sstDir,
+		indices:         make(map[string]shared.IndexEntry),
 	}, nil
 
 }
@@ -77,7 +91,7 @@ func (d *Db) Put(key string, value []byte) error {
 		// fmt.Println(d.memtableSize)
 		curSSTName := filepath.Join(d.sstDir, fmt.Sprintf("sst-%d.sst", d.nextFieldId))
 
-		err := sstable.WriteSSTtable(curSSTName, d.memtable.GetAll())
+		_, err := sstable.WriteSSTable(curSSTName, d.memtable.GetAll())
 		if err != nil {
 			return err
 		}
@@ -137,11 +151,11 @@ func (d *Db) Get(key string) ([]byte, bool, error) {
 			continue
 		}
 		fullPath := filepath.Join(d.sstDir, file.Name())
-		data, found, err := sstable.SearchSSTable(fullPath, key)
+		data, err := sstable.SearchSSTFile(fullPath, key)
 		if err != nil {
 			return nil, false, err
 		}
-		if found {
+		if data != nil {
 			return data, true, nil
 		}
 	}

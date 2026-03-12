@@ -1,9 +1,14 @@
 package wal
 
 import (
+	"encoding/binary"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/justsurfingit/lsm-db/memtable"
+	"github.com/justsurfingit/lsm-db/shared"
 )
 
 // WAL struct is created
@@ -37,8 +42,8 @@ func (w *Wal) Append(key string, value []byte) error {
 	// locking such that two different goroutine don't write to it at the same time
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	entry := key + ":" + string(value) + "\n"
-	_, err := w.file.WriteString(entry)
+	record := shared.EncodeRecords(key, value)
+	_, err := w.file.Write(record)
 	if err != nil {
 		return err
 	}
@@ -62,4 +67,51 @@ func (w *Wal) Clear() error {
 		return err
 	}
 	return w.file.Sync()
+}
+func (w *Wal) GetAll() ([]memtable.KVPair, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// Ensure we read from the beginning of the file
+	_, err := w.file.Seek(0, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	var KVpairs []memtable.KVPair
+	for {
+		var KeySize, ValueSize uint32
+		err := binary.Read(w.file, binary.LittleEndian, &KeySize)
+		if err == io.EOF {
+			break // Successfully reached the end of the WAL
+		}
+		if err != nil {
+			return nil, err
+		}
+		err = binary.Read(w.file, binary.LittleEndian, &ValueSize)
+		if err != nil {
+			return nil, err
+		}
+		key := make([]byte, KeySize)
+		value := make([]byte, ValueSize)
+		_, err = io.ReadFull(w.file, key)
+		if err != nil {
+			return nil, err
+		}
+		_, err = io.ReadFull(w.file, value)
+		if err != nil {
+			return nil, err
+		}
+		KVpairs = append(KVpairs, memtable.KVPair{
+			Key:   string(key),
+			Value: value,
+		})
+	}
+	// Seek back to the end of the file so future writes append correctly
+	_, err = w.file.Seek(0, io.SeekEnd)
+	if err != nil {
+		return nil, err
+	}
+
+	return KVpairs, nil
 }

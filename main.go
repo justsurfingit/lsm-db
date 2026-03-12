@@ -9,31 +9,30 @@ import (
 func main() {
 	dbConnection, err := lsmdb.NewDb("mydb_data")
 	if err != nil {
-		fmt.Println("Unable to establish connection with the database, reasons: ", err)
+		fmt.Println("Unable to establish connection with the database:", err)
 		return
 	}
-	// fmt.Println("--- Starting insertion to trigger flush ---")
 
-	// We will insert 100 keys.
-	// Each value is ~100 bytes. 100 * 100 = 10,000 bytes.
-	// Since the limit is 4,096, this SHOULD trigger at least 2 flushes!
-	// for i := 0; i < 1; i++ {
-	// 	key := fmt.Sprintf("user_%03d", i)
-	// 	fmt.Println(key)
-	// 	// value := []byte(fmt.Sprintf("this is a fairly long string of data for user %d to help fill the memtable", i))
+	fmt.Println("--- Testing Crash Recovery ---")
 
-	// 	// err := dbConnection.Put(key, value)
-	// 	// if err != nil {
-	// 	// 	fmt.Printf("Error putting key %s: %v\n", key, err)
-	// 	// }
-	// }
-	res, found, err := dbConnection.Get("user_001")
-	if err != nil {
-		fmt.Println(err)
-	} else if found {
-		fmt.Println(string(res))
-	} else {
-		fmt.Println("data not found")
+	// 1. First, let's see if we recovered previous unflushed data
+	res, found, _ := dbConnection.Get("user_crash_test")
+	if found {
+		fmt.Printf("RECOVERED DATA: %s\n", string(res))
+		return
 	}
 
+	// 2. If not found, let's insert it (but don't insert enough to trigger a flush)
+	fmt.Println("Data not found. Inserting new data into Memtable & WAL...")
+	key := "user_crash_test"
+	value := []byte("This data should survive a database restart even if not flushed to SSTable!")
+	
+	err = dbConnection.Put(key, value)
+	if err != nil {
+		fmt.Println("Error putting data:", err)
+		return
+	}
+	
+	fmt.Println("Data inserted into Memtable and appended to WAL.")
+	fmt.Println("Simulating a crash by exiting before flush...")
 }

@@ -1,5 +1,6 @@
 # Runtime database data
 mydb_data/
+guides/
 *.sst
 wal.log
 
