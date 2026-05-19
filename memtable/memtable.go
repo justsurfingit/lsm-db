@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"sync"
+
+	"github.com/justsurfingit/lsm-db/shared"
 )
 
 const maxLevel = 32
-const delKey = "___TOMBSTONE___"
 
 type Node struct {
 	Key     string
@@ -79,7 +80,7 @@ func (s *SkipList) Get(key string) ([]byte, bool) {
 		return nil, false
 	}
 	if string(node.forward[0].Key) == key {
-		if string(node.forward[0].Value) == delKey {
+		if string(node.forward[0].Value) == string(shared.Tombstone) {
 			return nil, false
 		}
 		return node.forward[0].Value, true

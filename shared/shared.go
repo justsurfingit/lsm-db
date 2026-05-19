@@ -3,11 +3,19 @@ package shared
 import (
 	"encoding/binary"
 )
-
+var Tombstone=[]byte("TOMBSTONE")
 type IndexEntry struct {
 	Key    string
 	Offset int64 // The byte position in the .sst file
 }
+//SSTable index used for storing stuff about active SSTable in memory
+type ActiveSSTableMeta struct{
+	ID       int
+	FilePath string
+	RefCount int32
+}
+
+
 
 func EncodeRecords(key string, value []byte) []byte {
 	keySize := uint32(len(key))
