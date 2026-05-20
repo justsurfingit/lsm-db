@@ -12,7 +12,7 @@ import (
 
 	"github.com/justsurfingit/lsm-db/memtable"
 	"github.com/justsurfingit/lsm-db/shared"
-	"github.com/justsurfingit/lsm-db/ssttable"
+	sstable "github.com/justsurfingit/lsm-db/ssttable"
 )
 
 const mergeSize = 4
@@ -22,7 +22,7 @@ type HeapItem struct {
 	KVPair    *memtable.KVPair
 	fp        *sstable.SSTableIterator
 }
-type MergeHeap []*HeapItem 
+type MergeHeap []*HeapItem
 
 func (h MergeHeap) Len() int { return len(h) }
 func (h MergeHeap) Less(i, j int) bool {
@@ -68,15 +68,13 @@ func (d *Db) CompactionManual() error {
 	// taking the last mergeSize files
 	filesToMerge := fileList[len(fileList)-mergeSize:]
 
-	
-
 	// initialize min heap
 	h := &MergeHeap{}
 	heap.Init(h)
 	// seeding first entries of all files into the heap
 	for i := 0; i < len(filesToMerge); i++ {
 		fullPath := filesToMerge[i].FilePath
-		fileId :=filesToMerge[i].ID
+		fileId := filesToMerge[i].ID
 		iterator, err := sstable.NewSSTableIterator(fullPath)
 		if err != nil {
 			return err
@@ -135,7 +133,7 @@ func (d *Db) CompactionManual() error {
 	}
 	// eventually everything will be done
 	// write the fully merged slice to a temporary SSTable
-	_, err = sstable.WriteSSTable(tempFilePath, compactedData)
+	_, err := sstable.WriteSSTable(tempFilePath, compactedData)
 	if err != nil {
 		return err
 	}

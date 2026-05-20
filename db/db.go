@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/justsurfingit/lsm-db/memtable"
 	"github.com/justsurfingit/lsm-db/shared"
@@ -25,8 +27,9 @@ type Db struct {
 	nextFieldId     int
 	sstDir          string
 	indices         map[string]shared.IndexEntry
-	mu sync.RWMutex
+	mu              sync.RWMutex
 	activeSSTables  []*shared.ActiveSSTableMeta
+	compactionChan  chan struct{}
 }
 
 func NewDb(path string) (*Db, error) {
@@ -51,18 +54,21 @@ func NewDb(path string) (*Db, error) {
 				name := strings.TrimPrefix(file.Name(), "sst-")
 				name = strings.TrimSuffix(name, ".sst")
 				id, convErr := strconv.Atoi(name)
-				if convErr == nil && id >= nextID {
+				if convErr == nil {
+					if id >= nextID {
 						nextID = id + 1
 					}
+					fullPath := filepath.Join(sstDir, file.Name())
+					activeSSTables = append(activeSSTables, &shared.ActiveSSTableMeta{
+						ID:       id,
+						FilePath: fullPath,
+						RefCount: 0,
+					})
 				}
-				activeSSTables = append(activeSSTables, &shared.ActiveSSTableMeta{
-					ID:       id,
-					FilePath: fullPath,
-					RefCount: 0,
-				})
 			}
 		}
-	
+	}
+
 	// sort in decending order highest ID first
 	sort.Slice(activeSSTables, func(i, j int) bool {
 		return activeSSTables[i].ID > activeSSTables[j].ID
@@ -74,15 +80,18 @@ func NewDb(path string) (*Db, error) {
 		return nil, err
 	}
 	// wAL replay
-	WALcontent,err:=wal.GetAll()
-	if err!=nil{
-		return nil,err
+	WALcontent, err := wal.GetAll()
+	if err != nil {
+		return nil, err
 	}
-	loadedMemtable:=memtable.NewSkipList()
-	for _,kvpair:=range WALcontent{
-		loadedMemtable.Put(kvpair.Key,kvpair.Value)
+	loadedMemtable := memtable.NewSkipList()
+	for _, kvpair := range WALcontent {
+		loadedMemtable.Put(kvpair.Key, kvpair.Value)
 	}
-	return &Db{
+	ch := make(chan struct{})
+	// spwan a goroutine for automatic event driven compaction
+
+	db := &Db{
 		memtable:        loadedMemtable,
 		wal:             wal,
 		memtableSize:    0,
@@ -90,8 +99,21 @@ func NewDb(path string) (*Db, error) {
 		nextFieldId:     nextID,
 		sstDir:          sstDir,
 		indices:         make(map[string]shared.IndexEntry),
-		activeSSTables:  activeSSTables,	
-	}, nil
+		activeSSTables:  activeSSTables,
+		compactionChan:  ch,
+	}
+	go func() {
+		for range db.compactionChan {
+			db.mu.RLock()
+			count := len(db.activeSSTables)
+			db.mu.RUnlock()
+			if count >= mergeSize {
+				// The threshold is hit! Run it!
+				db.CompactionManual()
+			}
+		}
+	}()
+	return db, nil
 
 }
 func (d *Db) Put(key string, value []byte) error {
@@ -109,12 +131,19 @@ func (d *Db) Put(key string, value []byte) error {
 	if curSize+d.memtableSize > d.maxMemtableSize {
 		// fmt.Println(d.memtableSize)
 		curSSTName := filepath.Join(d.sstDir, fmt.Sprintf("sst-%d.sst", d.nextFieldId))
-		
+
 		_, err := sstable.WriteSSTable(curSSTName, d.memtable.GetAll())
 		if err != nil {
 			return err
 		}
-		// add entry to the active sstable 
+		//add the channel triggering step
+		select {
+		case d.compactionChan <- struct{}{}:
+			// Token sent successfully! Worker is waking up.
+		default:
+			// Pipe is full or worker is busy, skip sending.
+		}
+		// add entry to the active sstable
 		newEntry := &shared.ActiveSSTableMeta{
 			ID:       d.nextFieldId,
 			FilePath: curSSTName,
@@ -140,7 +169,7 @@ func (d *Db) Put(key string, value []byte) error {
 	}
 	//now memtable
 	d.memtable.Put(key, value)
-	
+
 	d.memtableSize += curSize
 
 	return nil
@@ -151,7 +180,7 @@ func (d *Db) Get(key string) ([]byte, bool, error) {
 		return data, true, nil
 	}
 	d.mu.RLock()
-	
+
 	var files []*shared.ActiveSSTableMeta
 	for _, sst := range d.activeSSTables {
 		//as it is being read so reference count increases by 1
@@ -162,10 +191,10 @@ func (d *Db) Get(key string) ([]byte, bool, error) {
 
 	//decreasing the reference count when work is done
 	defer func() {
-    for _, file := range files {
-        atomic.AddInt32(&file.RefCount, -1)
-    }
-}()
+		for _, file := range files {
+			atomic.AddInt32(&file.RefCount, -1)
+		}
+	}()
 	// parseSSTID := func(name string) int {
 	// 	if !strings.HasPrefix(name, "sst-") || !strings.HasSuffix(name, ".sst") {
 	// 		return -1
