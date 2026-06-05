@@ -54,12 +54,15 @@ func integerIDParser(id string) int {
 	return val
 }
 
-func (d *Db) CompactionManual() error {
-	//as we are maintaing it so why don't just use it
+func (d *Db) CompactionManual() (bool, error) {
+	// Must read activeSSTables safely to avoid slice header race conditions with Put()
+	d.mu.RLock()
 	fileList := d.activeSSTables
+	d.mu.RUnlock()
+
 	// enough file check if number of files are less than required then there is no need for compaction
 	if len(fileList) <= mergeSize {
-		return nil
+		return false, nil
 	}
 	// sorting the files based on the ID
 	// sort.Slice(fileList, func(i, j int) bool {
@@ -77,11 +80,11 @@ func (d *Db) CompactionManual() error {
 		fileId := filesToMerge[i].ID
 		iterator, err := sstable.NewSSTableIterator(fullPath)
 		if err != nil {
-			return err
+			return false, err
 		}
 		kvp, err := iterator.Next()
 		if err != nil {
-			return err
+			return false, err
 		}
 		if kvp != nil {
 			heap.Push(h, &HeapItem{
@@ -117,7 +120,7 @@ func (d *Db) CompactionManual() error {
 		// fetch the next key value pair from the file
 		nextkvp, err := minItem.fp.Next()
 		if err != nil {
-			return err
+			return false, err
 		}
 		// if nextkvp is nill that means we have reached the end of the file
 		if nextkvp == nil {
@@ -135,12 +138,12 @@ func (d *Db) CompactionManual() error {
 	// write the fully merged slice to a temporary SSTable
 	_, err := sstable.WriteSSTable(tempFilePath, compactedData)
 	if err != nil {
-		return err
+		return false, err
 	}
 	tempSSTName := filepath.Join(d.sstDir, fmt.Sprintf("sst-%d.sst", tempfileId))
 	err = os.Rename(tempFilePath, tempSSTName)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// storing new sst file into activeSSTable
@@ -177,5 +180,5 @@ func (d *Db) CompactionManual() error {
 		os.Remove(file.FilePath)
 	}
 
-	return nil
+	return true, nil
 }

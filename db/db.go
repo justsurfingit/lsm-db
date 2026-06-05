@@ -31,7 +31,22 @@ type Db struct {
 	activeSSTables  []*shared.ActiveSSTableMeta
 	compactionChan  chan struct{}
 }
+type DbStats struct {
+	MemtableSize    int
+	MaxMemtableSize int
+	ActiveSSTables  int
+}
 
+// GetStats returns thread-safe metrics for the UI dashboard
+func (d *Db) GetStats() DbStats {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return DbStats{
+		MemtableSize:    d.memtableSize,
+		MaxMemtableSize: d.maxMemtableSize,
+		ActiveSSTables:  len(d.activeSSTables),
+	}
+}
 func NewDb(path string) (*Db, error) {
 	nextID := 1 // Default if the folder is completely empty
 	err := os.MkdirAll(path, 0755)
@@ -85,7 +100,14 @@ func NewDb(path string) (*Db, error) {
 		return nil, err
 	}
 	loadedMemtable := memtable.NewSkipList()
+	memSize := 0
 	for _, kvpair := range WALcontent {
+		prevVal, found := loadedMemtable.Get(kvpair.Key)
+		cur := len(kvpair.Key) + len(kvpair.Value)
+		if found {
+			cur -= (len(kvpair.Key) + len(prevVal))
+		}
+		memSize += cur
 		loadedMemtable.Put(kvpair.Key, kvpair.Value)
 	}
 	ch := make(chan struct{})
@@ -94,7 +116,7 @@ func NewDb(path string) (*Db, error) {
 	db := &Db{
 		memtable:        loadedMemtable,
 		wal:             wal,
-		memtableSize:    0,
+		memtableSize:    memSize,
 		maxMemtableSize: 4096,
 		nextFieldId:     nextID,
 		sstDir:          sstDir,
