@@ -11,7 +11,7 @@ This project was built to explore low-level database systems engineering, disk I
 
 ## System Architecture
 
-![System Architecture](./assets/diagram-1780648423213.png)
+![System Architecture](./assets/diagram-1780649271893.svg)
 
 ## Key Features & Architecture
 
