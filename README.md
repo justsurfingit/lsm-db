@@ -9,6 +9,56 @@ LSM-DB is a highly performant, embeddable Key-Value store built from scratch in 
 
 This project was built to explore low-level database systems engineering, disk I/O optimization, and memory management.
 
+## System Architecture
+
+```mermaid
+graph TD
+    Client([Database Client API])
+    
+    subgraph Memory [In-Memory Engine / RAM]
+        Memtable[Memtable<br/>Probabilistic SkipList]
+    end
+
+    subgraph Disk [Persistent Storage / SSD]
+        WAL[(Write-Ahead Log<br/>wal.log)]
+        SST_New[(SSTable N<br/>Newest)]
+        SST_Old[(SSTable N-1, N-2, N-3<br/>Oldest)]
+        Sparse["Sparse Index Footer<br/>O(1) Disk Seeks"]
+    end
+    
+    subgraph Engine [Background Engine]
+        Worker((Compaction Worker<br/>Goroutine))
+        Heap{Min-Heap<br/>K-Way Merge}
+    end
+
+    %% Write Path (Solid Lines)
+    Client -- "1. PUT(Key, Val)" --> WAL
+    WAL -- "2. f.Sync() for Durability" --> Memtable
+    Memtable -- "3. Flush at 4KB Capacity" --> SST_New
+    Memtable -- "4. Clear WAL" --> WAL
+    
+    %% Compaction Path (Thick Lines)
+    Memtable ==>|"5. Signal compactionChan"| Worker
+    Worker ==>|"6. Lock & Read >= 4 Files"| SST_Old
+    SST_Old ==>|"7. Seed Iterator"| Heap
+    Heap ==>|"8. Merge to New & Delete Old"| SST_New
+    
+    %% Read Path (Dotted Lines)
+    Client -.->|"GET(Key)"| Memtable
+    Memtable -.->|"Cache Miss"| SST_New
+    SST_New -.->|"Cache Miss"| SST_Old
+    SST_New -.->|"Jump to Offset"| Sparse
+    SST_Old -.->|"Jump to Offset"| Sparse
+
+    classDef storage fill:#1e1e1e,stroke:#636363,stroke-width:2px,color:#fff;
+    classDef memory fill:#0d47a1,stroke:#64b5f6,stroke-width:2px,color:#fff;
+    classDef compute fill:#1b5e20,stroke:#4caf50,stroke-width:2px,color:#fff;
+    
+    class WAL,SST_New,SST_Old,Sparse storage;
+    class Memtable memory;
+    class Worker,Heap compute;
+```
+
 ## Key Features & Architecture
 
 ### 1. High-Throughput Concurrency (Reference Counting)
